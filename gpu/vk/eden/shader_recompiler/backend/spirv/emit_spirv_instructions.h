@@ -99,7 +99,7 @@ Id EmitUndefU64(EmitContext& ctx);
 void EmitLoadGlobalU8(EmitContext& ctx);
 void EmitLoadGlobalS8(EmitContext& ctx);
 void EmitLoadGlobalU16(EmitContext& ctx);
-void EmitLoadGlobalS16(EmitContext& ctx);
+Id EmitLoadGlobalS16(EmitContext& ctx, Id address);
 Id EmitLoadGlobal32(EmitContext& ctx, Id address);
 Id EmitLoadGlobal64(EmitContext& ctx, Id address);
 Id EmitLoadGlobal128(EmitContext& ctx, Id address);
