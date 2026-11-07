@@ -90,8 +90,20 @@ void EmitLoadGlobalU16(EmitContext&) {
     throw NotImplementedException("SPIR-V Instruction");
 }
 
-void EmitLoadGlobalS16(EmitContext&) {
-    throw NotImplementedException("SPIR-V Instruction");
+Id EmitLoadGlobalS16(EmitContext& ctx, Id address) {
+    if (!ctx.profile.support_int64) {
+        LOG_WARNING(Shader_SPIRV, "Int64 not supported, ignoring memory operation");
+        return ctx.Const(0u);
+    }
+    // The guest S16 load addresses an aligned halfword. Read its containing 32-bit
+    // word through the existing global-memory fallback, then sign-extend the half.
+    const Id aligned{ctx.OpShiftLeftLogical(
+        ctx.U64, ctx.OpShiftRightLogical(ctx.U64, address, ctx.Const(2U)), ctx.Const(2U))};
+    const Id word{ctx.OpFunctionCall(ctx.U32[1], ctx.load_global_func_u32, aligned)};
+    const Id half_offset{ctx.OpBitwiseAnd(ctx.U32[1],
+                                          ctx.OpUConvert(ctx.U32[1], address), ctx.Const(2U))};
+    const Id bit_offset{ctx.OpShiftLeftLogical(ctx.U32[1], half_offset, ctx.Const(3U))};
+    return ctx.OpBitFieldSExtract(ctx.U32[1], word, bit_offset, ctx.Const(16U));
 }
 
 Id EmitLoadGlobal32(EmitContext& ctx, Id address) {
