@@ -47,6 +47,7 @@ on:
       - gpu/vk/vk_memory.cpp
       - tests/test_pool_span.py
       - tests/test_submitted_page.py
+      - tests/test_cpu_event_origin.py
       - gpu/vk/vk_replay.cpp
       - gpu/vk/vk_draw.h
       - tests/test_ub_memo.py
@@ -149,6 +150,7 @@ on:
       - gpu/vk/vk_memory.cpp
       - tests/test_pool_span.py
       - tests/test_submitted_page.py
+      - tests/test_cpu_event_origin.py
       - gpu/vk/vk_replay.cpp
       - gpu/vk/vk_draw.h
       - tests/test_ub_memo.py
@@ -317,6 +319,9 @@ jobs:
       - name: Check a captured page is read once
         if: runner.os == 'Linux'
         run: python -I -B tests/test_submitted_page.py
+      - name: Check GPU signals clear earlier CPU-event provenance
+        if: runner.os == 'Linux'
+        run: python -I -B tests/test_cpu_event_origin.py
       - name: Check uniform words skip a known gap
         if: runner.os == 'Linux'
         run: python -I -B tests/test_ub_gap.py
