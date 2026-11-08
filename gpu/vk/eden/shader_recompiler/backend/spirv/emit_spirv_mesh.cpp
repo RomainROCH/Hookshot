@@ -257,7 +257,9 @@ void EmitMeshPrologue(EmitContext& ctx) {
                 return;
             }
             for (u32 first = 0; first < count; first += ctx.mesh_threads) {
-                const Id at{Clamped(ctx, ctx.OpIAdd(ctx.U32[1], invocation, ctx.Const(first)), count)};
+                // Both shared arrays are padded to a multiple of mesh_threads, so this
+                // address is in bounds and unique per invocation even on the last iteration.
+                const Id at{ctx.OpIAdd(ctx.U32[1], invocation, ctx.Const(first))};
                 ctx.OpStore(SharedWord(ctx, array, at), ctx.u32_zero_value);
             }
         };
