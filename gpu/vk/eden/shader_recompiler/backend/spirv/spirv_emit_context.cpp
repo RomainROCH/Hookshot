@@ -1954,10 +1954,17 @@ void EmitContext::DefineMesh(const IR::Program& program) {
         1U);
     mesh_map_bytes = 4 + (mesh_info.topology == 1 ? 2 : 3) * mesh_info.max_primitives;
     mesh_shared_u32 = TypePointer(spv::StorageClass::Workgroup, U32[1]);
-    mesh_attributes = DefineVariable(*this, TypeArray(U32[1], Const(mesh_attribute_words)),
+    // The prologue initializes one word per lane. Give every lane a distinct tail slot
+    // when the logical region is not divisible by the workgroup size, so stores do not race.
+    // Guest accesses continue to use the unpadded logical lengths.
+    const auto padded_words = [&](u32 count) {
+        const u32 threads = (std::max)(mesh_threads, 1U);
+        return count + ((threads - count % threads) % threads);
+    };
+    mesh_attributes = DefineVariable(*this, TypeArray(U32[1], Const(padded_words(mesh_attribute_words))),
                                      std::nullopt, spv::StorageClass::Workgroup);
     Name(mesh_attributes, "isbe_attributes");
-    mesh_map = DefineVariable(*this, TypeArray(U32[1], Const(mesh_map_bytes)), std::nullopt,
+    mesh_map = DefineVariable(*this, TypeArray(U32[1], Const(padded_words(mesh_map_bytes))), std::nullopt,
                               spv::StorageClass::Workgroup);
     Name(mesh_map, "isbe_map");
     mesh_primitive_count =
