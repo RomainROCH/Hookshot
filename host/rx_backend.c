@@ -334,23 +334,52 @@ void rx_nvn_read_texels(const nvn_tex *t, unsigned level, unsigned layer0, const
                         size_t row, size_t img) {
     vk ? vk->nvn_read_texels(t, level, layer0, r, dst, row, img) : wgr_nvn_read_texels(t, level, layer0, r, dst, row, img);
 }
+/* The Vulkan WriteTexels path treats zero pitches as tightly packed rows/slices.
+   Capture the same span before the renderer starts; otherwise a 4x4 R8 image
+   with row=img=0 copies 4 bytes and the replay reads 16. Check arithmetic
+   before allocating, including padded rows and multiple slices. */
+static int early_texel_copy_size(uint64_t width, uint64_t height, uint64_t depth,
+                                 uint64_t bw, uint64_t bh, uint64_t bpb,
+                                 uint64_t row, uint64_t img, size_t *bytes) {
+    if (!width || !height || !bw || !bh || !bpb || !bytes) return 0;
+    const uint64_t w = width / bw + (width % bw != 0);
+    const uint64_t h = height / bh + (height % bh != 0);
+    if (w > UINT64_MAX / bpb) return 0;
+    const uint64_t tight_row = w * bpb;
+    const uint64_t pitch = row ? row : tight_row;
+    if (h > UINT64_MAX / pitch) return 0;
+    const uint64_t image = img ? img : h * pitch;
+    const uint64_t slices = depth ? depth : 1;
+    if (slices - 1 > UINT64_MAX / image) return 0;
+    const uint64_t slice_offset = (slices - 1) * image;
+    if (h - 1 > (UINT64_MAX - slice_offset) / pitch) return 0;
+    const uint64_t last_row = slice_offset + (h - 1) * pitch;
+    if (tight_row > UINT64_MAX - last_row) return 0;
+    const uint64_t count = last_row + tight_row;
+    if (count > SIZE_MAX) return 0;
+    *bytes = (size_t)count;
+    return 1;
+}
+
 void rx_nvn_write_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, const uint8_t *src,
                          size_t row, size_t img) {
     if (!started && t && r && src) {   /* (kept with a copy of the data: the caller's buffer is its own again on return) */
         int bw = 1, bh = 1;
         const int bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
         if (bpb > 0 && bw > 0 && bh > 0 && r->width > 0 && r->height > 0) {
-            const uint64_t wb = (uint64_t)((r->width + bw - 1) / bw) * (uint64_t)bpb, hb = (uint64_t)((r->height + bh - 1) / bh);
-            const uint64_t depth = r->depth > 0 ? (uint64_t)r->depth : 1;
-            /* (the bytes the copy reads: the last row of the last slice ends the data, whatever the strides) */
-            const uint64_t n = (depth - 1) * img + (hb - 1) * row + wb;
-            early_call c = {5, 0};
-            c.t = *t, c.level = level, c.layer0 = layer0, c.r = *r, c.row = row, c.img = img;
-            c.data = (uint8_t *)malloc(n);
-            if (c.data) {
-                memcpy(c.data, src, n);
-                if (keep_early(&c)) return;
-                free(c.data);
+            size_t n;
+            if (early_texel_copy_size((uint64_t)r->width, (uint64_t)r->height,
+                                     r->depth > 0 ? (uint64_t)r->depth : 1,
+                                     (uint64_t)bw, (uint64_t)bh, (uint64_t)bpb,
+                                     (uint64_t)row, (uint64_t)img, &n)) {
+                early_call c = {5, 0};
+                c.t = *t, c.level = level, c.layer0 = layer0, c.r = *r, c.row = row, c.img = img;
+                c.data = (uint8_t *)malloc(n);
+                if (c.data) {
+                    memcpy(c.data, src, n);
+                    if (keep_early(&c)) return;
+                    free(c.data);
+                }
             }
         }
     }
