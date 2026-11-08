@@ -75,6 +75,8 @@ on:
       - tests/test_audio_output_errors.py
       - tests/audio_output_errors_test.c
       - host/nvn_native.c
+      - host/rx_backend.c
+      - tests/test_early_texel_implicit_pitch.py
       - tests/test_nvn_null_pool.py
       - tests/test_nvn_tex_builder_guard.py
       - host/pad_sdl.c
@@ -193,6 +195,8 @@ on:
       - tests/test_audio_output_errors.py
       - tests/audio_output_errors_test.c
       - host/nvn_native.c
+      - host/rx_backend.c
+      - tests/test_early_texel_implicit_pitch.py
       - tests/test_nvn_null_pool.py
       - tests/test_nvn_tex_builder_guard.py
       - host/pad_sdl.c
@@ -407,6 +411,9 @@ jobs:
       - name: Check a null NVN memory pool is answered, not dereferenced
         if: runner.os == 'Linux'
         run: python -I -B tests/test_nvn_null_pool.py
+      - name: Check early texel copies honor implicit pitches
+        if: runner.os == 'Linux'
+        run: python -I -B tests/test_early_texel_implicit_pitch.py
       - name: Check a null NVN texture builder is a scratch one
         if: runner.os == 'Linux'
         run: python -I -B tests/test_nvn_tex_builder_guard.py
