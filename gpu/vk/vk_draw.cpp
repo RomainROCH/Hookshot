@@ -5240,7 +5240,7 @@ void precompile_run(void (*progress)(size_t done, size_t total), bool hand_over)
         std::vector<std::unique_ptr<PipeNote>> notes;
         std::vector<PipeEntry*> entries;   // (each note's, made before the workers start; null: not built here)
         std::vector<Program*> computes;
-        std::atomic<size_t> next{0}, done{0};
+        std::atomic<size_t> next{0}, done{0}, compute_done{0};
     };
     const auto run = std::make_shared<Run>();
     auto& notes = run->notes;
@@ -5300,6 +5300,7 @@ void precompile_run(void (*progress)(size_t done, size_t total), bool hand_over)
                         p.compute_state.store(0, std::memory_order_release);   // (the dispatch tries it again, as before)
                     }
                 }
+                run->compute_done.fetch_add(1, std::memory_order_release);
             } else if (PipeEntry* e = run->entries[i - computes.size()]) {
                 const PipeNote& n = *run->notes[i - computes.size()];
                 const Program* p = program_find(n.prog, n.variant);
@@ -5331,7 +5332,11 @@ void precompile_run(void (*progress)(size_t done, size_t total), bool hand_over)
         if (progress) progress(run->done.load(), total);
         Sleep(100);
         if (run->next.load() >= total + threads.size()) break;
-        if (hand_over && tail_ms > 0 && run->next.load() >= total) {
+        // A one-shot dispatch cannot replay a compute operation skipped while its
+        // precompile worker holds compute_state=1. Finish compute builds before
+        // handing over; graphics builds may continue in the background.
+        if (hand_over && tail_ms > 0 && run->next.load() >= total &&
+            run->compute_done.load(std::memory_order_acquire) == computes.size()) {
             const auto now = std::chrono::steady_clock::now();
             if (all_begun == std::chrono::steady_clock::time_point{}) all_begun = now;
             else if (now - all_begun >= std::chrono::milliseconds(tail_ms)) {
