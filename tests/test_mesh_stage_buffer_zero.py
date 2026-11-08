@@ -36,8 +36,18 @@ def main():
     zero_fn = block(mesh, "const auto zero_all = [&]")
     if "If(ctx" in zero_fn or "OpBranch" in zero_fn or "OpSelectionMerge" in zero_fn:
         raise SystemExit("the zeroing branches: the prologue's entry block is a phi predecessor")
-    if "Clamped(ctx," not in zero_fn:
-        raise SystemExit("the zeroing stores are not clamped into their arrays")
+    if "Clamped(ctx," in zero_fn:
+        raise SystemExit("clamping aliases the last word across lanes when the count is not a multiple of the workgroup size")
+    context = (ROOT / "gpu" / "vk" / "eden" / "shader_recompiler" / "backend" / "spirv" /
+               "spirv_emit_context.cpp").read_text(encoding="utf-8")
+    if "Const(padded_words(mesh_map_bytes))" not in context or "Const(padded_words(mesh_attribute_words))" not in context:
+        raise SystemExit("both shared arrays must be padded to a whole number of lanes")
+    for threads in (32, 64, 128):
+        for count in (1, 32, 127, 382, 385):
+            physical = count + ((threads - count % threads) % threads)
+            writes = [first + invocation for first in range(0, count, threads) for invocation in range(threads)]
+            if len(set(writes)) != physical or min(writes) != 0 or max(writes) != physical - 1:
+                raise SystemExit(f"overlapping or out-of-bounds zero stores: {count=}, {threads=}")
     if 'getenv("RX_VK_MESH_NO_ZERO")' not in mesh:
         raise SystemExit("no RX_VK_MESH_NO_ZERO switch")
     print("mesh stage buffer zeroed in the prologue ok")
