@@ -663,6 +663,12 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
                 uint32_t old = it != ev_values.end() ? it->second : 0;
                 if (it == ev_values.end()) host->gpu_read(e.gpu, &old, 4);
                 ev_values[e.gpu] = e.mode == NVN_EVENT_SIGNAL_MODE_ADD ? old + e.value : e.value;
+                // The most recent signal at this address came from the GPU. Keeping an earlier CPU
+                // classification makes resume_queue take a fresh capture at a GPU-only wait.
+                {
+                    std::lock_guard lk(ev_cpu_mu);
+                    cpu_events.erase(e.gpu);
+                }
             }
             if (dry) break;
             const auto e = payload<nvn_p_signal>(a, avail);
