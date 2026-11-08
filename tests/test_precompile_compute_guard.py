@@ -10,6 +10,7 @@ import tempfile
 
 FIXTURE = r'''
 #include <atomic>
+#include <chrono>
 #include <cassert>
 #include <memory>
 #include <thread>
@@ -21,7 +22,9 @@ struct Run {
 };
 bool may_handover(const std::shared_ptr<Run>& run, bool hand_over,
                   long long tail_ms, size_t total, const std::vector<int>& computes) {
-    return GUARD;
+    const auto now = std::chrono::steady_clock::now();
+    const auto all_begun = now - std::chrono::milliseconds(5000);
+    return hand_over && tail_ms > 0 && run->next.load() >= total && (GUARD);
 }
 int main() {
     for (int i = 0; i < 500; ++i) {
@@ -55,10 +58,10 @@ def main():
                         default=Path(__file__).resolve().parents[1] / 'gpu/vk/vk_draw.cpp')
     args = parser.parse_args()
     code = args.source.read_text(encoding='utf-8')
-    needle = 'if (hand_over && tail_ms > 0 && run->next.load() >= total &&'
+    needle = 'else if (now - all_begun >= std::chrono::milliseconds(tail_ms) &&'
     pos = code.index(needle)
     end = code.index(') {', pos)
-    guard = code[pos + len('if ('):end]
+    guard = code[pos + len('else if ('):end]
     if 'run->compute_done.load(std::memory_order_acquire) == computes.size()' not in guard:
         raise AssertionError('compute completion must be in handover gate')
     if code.count('run->compute_done.fetch_add(1, std::memory_order_release)') != 1:
