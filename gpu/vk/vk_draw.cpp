@@ -5335,11 +5335,11 @@ void precompile_run(void (*progress)(size_t done, size_t total), bool hand_over)
         // A one-shot dispatch cannot replay a compute operation skipped while its
         // precompile worker holds compute_state=1. Finish compute builds before
         // handing over; graphics builds may continue in the background.
-        if (hand_over && tail_ms > 0 && run->next.load() >= total &&
-            run->compute_done.load(std::memory_order_acquire) == computes.size()) {
+        if (hand_over && tail_ms > 0 && run->next.load() >= total) {
             const auto now = std::chrono::steady_clock::now();
             if (all_begun == std::chrono::steady_clock::time_point{}) all_begun = now;
-            else if (now - all_begun >= std::chrono::milliseconds(tail_ms)) {
+            else if (now - all_begun >= std::chrono::milliseconds(tail_ms) &&
+                     run->compute_done.load(std::memory_order_acquire) == computes.size()) {
                 handed = true;
                 break;
             }
