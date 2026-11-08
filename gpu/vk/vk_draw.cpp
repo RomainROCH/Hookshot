@@ -4129,9 +4129,17 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         float w = 0;
         ~MaskGuard() { if (cmd) mask_stabilize(cmd, tex, level, layer, w); }
     } mask_guard;
-    if (p.key == 0x3427a1dbefd5e02cull && at.n > 0 && at.color[0])
-        if (const float mw = mask_weight(); mw > 0)
-            mask_guard = {cmd, at.color[0], at.color_level[0], at.color_layer[0], mw};
+    if (p.key == 0x3427a1dbefd5e02cull && at.n > 0 && at.color[0]) {
+        if (const float mw = mask_weight(); mw > 0) {
+            // Set the existing guard's fields. Assigning a temporary MaskGuard here would
+            // destroy it immediately and run mask_stabilize before this draw, then again on exit.
+            mask_guard.tex = at.color[0];
+            mask_guard.level = at.color_level[0];
+            mask_guard.layer = at.color_layer[0];
+            mask_guard.w = mw;
+            mask_guard.cmd = cmd;
+        }
+    }
     if (!record_progs().empty() && std::find(record_progs().begin(), record_progs().end(), p.key) != record_progs().end())
         record_draw(s, p, d, at);
     // (RX_VK_DUMP_EACH=<key>,...: in a dump, the pass ends after each draw of those programs, so every one of them is
