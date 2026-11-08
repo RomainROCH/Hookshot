@@ -52,6 +52,8 @@ on:
       - nx2/test_version.py
       - scripts/changelog.py
       - tests/test_changelog.py
+      - host/nn_fs.c
+      - tests/test_nn_fs_directory_entry.py
       - host/nn_audio.c
       - tests/test_audio_deadline.py
       - host/pad_sdl.c
@@ -128,6 +130,8 @@ on:
       - nx2/test_version.py
       - scripts/changelog.py
       - tests/test_changelog.py
+      - host/nn_fs.c
+      - tests/test_nn_fs_directory_entry.py
       - host/nn_audio.c
       - tests/test_audio_deadline.py
       - host/pad_sdl.c
@@ -184,6 +188,8 @@ jobs:
         run: python -I -B nx2/test_nup_paths.py
       - name: Check source-cache coherency
         run: python -I -B tests/test_make_game_cache.py
+      - name: Check filesystem directory-entry ABI
+        run: python -I -B tests/test_nn_fs_directory_entry.py
       - name: Check Vulkan presentation rectangle
         if: runner.os == 'Windows'
         shell: cmd
