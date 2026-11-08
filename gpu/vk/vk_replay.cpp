@@ -112,13 +112,20 @@ uint64_t completed() {
 // present, a sparse bind, another submit (queue_flush_locked under dev.present_mu).
 // (hookshot) on by default with Mesa's RADV, where it was measured (issue 413: a Radeon 8060S on Bazzite, ~10 -> 30-50 fps, the
 // replay's queue submit ~70 -> ~6 ms a frame); elsewhere as before. RX_VK_BATCH=0 / 1: off / on on any driver
-bool batch_on() {
-    static const bool on = [] {
-        bool radv = false;
+bool is_radv_driver() {
+    static const bool radv = [] {
+        if (!dev.physical) return false;
         VkPhysicalDeviceDriverProperties dp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
         VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
         p2.pNext = &dp;
-        if (dev.physical) vkGetPhysicalDeviceProperties2(dev.physical, &p2), radv = dp.driverID == VK_DRIVER_ID_MESA_RADV;
+        vkGetPhysicalDeviceProperties2(dev.physical, &p2);
+        return dp.driverID == VK_DRIVER_ID_MESA_RADV;
+    }();
+    return radv;
+}
+bool batch_on() {
+    static const bool on = [] {
+        const bool radv = is_radv_driver();
         const char* e = getenv("RX_VK_BATCH");
         const bool v = e ? atoi(e) != 0 : radv;
         logf("vk: batched submits %s (RX_VK_BATCH%s)", v ? "on" : "off", !e && radv ? ", on with RADV" : "");
@@ -164,9 +171,14 @@ void queue_flush_for(int why) {
     flush_reason = why;
     queue_flush_locked();
 }
-// (RX_VK_BATCH_POLL_US=<us>: a progress poll sends held submits only once the oldest has waited that long; 0: always)
+// (RX_VK_BATCH_POLL_US=<us>: wait before flushing held work on a progress poll; 0: always).
+// RADV defaults to 2000 us to avoid flushing multiple times per frame (#413, myylkn's release A/B).
+// Explicit RX_VK_BATCH_POLL_US still overrides the driver default; other GPUs keep 0.
 void queue_flush_poll() {
-    static const int64_t us = getenv("RX_VK_BATCH_POLL_US") ? atoll(getenv("RX_VK_BATCH_POLL_US")) : 0;
+    static const int64_t us = [] {
+        const char* e = getenv("RX_VK_BATCH_POLL_US");
+        return e ? atoll(e) : (is_radv_driver() ? 2000LL : 0LL);
+    }();
     std::lock_guard lk(dev.present_mu);
     if (pend.cbs.empty()) return;
     if (us > 0 && std::chrono::steady_clock::now() - pend_since < std::chrono::microseconds(us)) return;
