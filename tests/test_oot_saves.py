@@ -322,6 +322,38 @@ class Guard(Case):
         self.assertEqual(code, 0, err)
         self.assertEqual(tree(self.li), tree(self.hs))
 
+    def test_copy_failure_preserves_active_save(self):
+        before = tree(self.li)
+        real_copy = oot.shutil.copytree
+
+        def fail_copy(src, dst, *args, **kwargs):
+            if Path(src) == self.hs / "slot_01":
+                raise OSError("injected read failure for the second incoming slot")
+            return real_copy(src, dst, *args, **kwargs)
+
+        with mock.patch.object(oot.shutil, "copytree", side_effect=fail_copy):
+            with self.assertRaises(OSError):
+                oot.copy_saves(str(self.hs), str(self.li), str(self.tmp / "failed-backup"),
+                               keep_settings=False, dry_run=False)
+        self.assertEqual(tree(self.li), before)
+        self.assertEqual(tree(self.tmp / "failed-backup"), before)
+
+    def test_final_rename_failure_restores_active_save(self):
+        before = tree(self.li)
+        real_replace = oot.os.replace
+
+        def fail_replace(src, dst):
+            if Path(src).name == "new":
+                raise OSError("injected final rename failure")
+            return real_replace(src, dst)
+
+        with mock.patch.object(oot.os, "replace", side_effect=fail_replace):
+            with self.assertRaises(OSError):
+                oot.copy_saves(str(self.hs), str(self.li), str(self.tmp / "failed-rename-backup"),
+                               keep_settings=False, dry_run=False)
+        self.assertEqual(tree(self.li), before)
+        self.assertEqual(tree(self.tmp / "failed-rename-backup"), before)
+
     def real(self):
         # (the real running_games, not the test's mock of it)
         real = importlib.util.module_from_spec(spec)
