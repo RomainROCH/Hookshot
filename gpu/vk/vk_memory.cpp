@@ -2417,11 +2417,15 @@ void reap_mirrors() {   // (pools_mu held)
     }
 }
 void retired_imports_give_back() {   // (pools_mu held)
-    // (hookshot) Kept by default on Windows: giving them back is for the Linux amdgpu submit above, and on Windows an Intel Arc
-    // B390 lost the device entering Kokiri every time with it and 1 run in 5 without (issue 17, fuxau); the AMD device losses
-    // on the Ally X (309) and RX 6600 (571) came right after retired pools went back. RX_VK_KEEP_RETIRED=0 or 1 chooses
+    // Keep retired imports by default on Windows Intel/AMD: releasing them caused device losses
+    // (Arc B390 #17, AMD #309/#571). On NVIDIA, keeping them caused a repeatable 8 GB device loss
+    // after a long area tour (#1057); allowing normal timeline-safe release avoided it (2/2 runs).
+    // RX_VK_KEEP_RETIRED=0/1 always overrides the vendor default.
 #ifdef _WIN32
-    static const bool keep = !getenv("RX_VK_KEEP_RETIRED") || getenv("RX_VK_KEEP_RETIRED")[0] != '0';
+    static const bool keep = [] {
+        if (const char* value = getenv("RX_VK_KEEP_RETIRED")) return value[0] != '0';
+        return dev.props.vendorID != 0x10DE;
+    }();
 #else
     static const bool keep = getenv("RX_VK_KEEP_RETIRED") && getenv("RX_VK_KEEP_RETIRED")[0] != '0';
 #endif
