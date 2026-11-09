@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 TITLE = "0400486024DEC000"
 NO_ACCOUNT = "0000000000000000"
@@ -289,12 +290,27 @@ def copy_saves(src, dst, backup, keep_settings, dry_run):
         return
     os.makedirs(os.path.dirname(backup), exist_ok=True)
     shutil.copytree(dst, backup)
-    for s in slots(dst):
-        shutil.rmtree(os.path.join(dst, s))
-    for s in names:
-        shutil.copytree(os.path.join(src, s), os.path.join(dst, s))
-    for f in files:
-        shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
+    # Stage the complete replacement on the target filesystem before altering
+    # the active save. A failed copy must not leave it with missing slots.
+    target = os.path.realpath(dst)
+    with tempfile.TemporaryDirectory(prefix=".oot-save-stage-", dir=os.path.dirname(target)) as temp:
+        staged = os.path.join(temp, "new")
+        previous = os.path.join(temp, "previous")
+        shutil.copytree(target, staged)
+        for s in slots(staged):
+            shutil.rmtree(os.path.join(staged, s))
+        for s in names:
+            shutil.copytree(os.path.join(src, s), os.path.join(staged, s))
+        for f in files:
+            shutil.copy2(os.path.join(src, f), os.path.join(staged, f))
+        # Rename on one filesystem; restore the old directory if installation fails.
+        # The independent dated backup is retained in either case.
+        os.replace(target, previous)
+        try:
+            os.replace(staged, target)
+        except BaseException:
+            os.replace(previous, target)
+            raise
     print("Done. Backup of the old %s in %s" % (dst, backup))
 
 
