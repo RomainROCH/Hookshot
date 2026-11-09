@@ -1471,11 +1471,17 @@ bool take_capture(std::unique_ptr<Capture> c, uint64_t value, uint64_t completed
     cur_cap_value = value;
     cur_cap_gen = 0;
     // (captures past the last kKeep, or past the byte budget, retired once the work that read them is done)
-    while (!cap_bufs.empty()) {
-        auto oldest = cap_bufs.begin();
-        const bool over = cap_bufs.size() > kKeep || cap_bytes > kCapBytesMax;
-        if (!over || std::max(oldest->second.value, oldest->second.last_use) > completed) break;
-        cap_buf_retire(oldest);
+    // Do not let one frequently reused old capture pin every newer, already-completed buffer.
+    // Each candidate is checked against both the creating submit and its last GPU use.
+    for (auto it = cap_bufs.begin(); it != cap_bufs.end() &&
+                                      (cap_bufs.size() > kKeep || cap_bytes > kCapBytesMax);) {
+        const CapBuf& b = it->second;
+        if (std::max(b.value, b.last_use) > completed) {
+            ++it;
+            continue;
+        }
+        auto dead = it++;
+        cap_buf_retire(dead);
     }
     uint32_t g = 0;
     if (!c->pages.empty()) {
