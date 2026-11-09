@@ -4483,17 +4483,30 @@ uint64_t fallback_payload_bytes(const Program& p) {
 
 bool make_fallback_buffers(FallbackBuffers& f, uint64_t records, uint64_t payload) {
     f.tried = true;
+    // An address lookup or later allocation may fail after VMA created a buffer.
+    // Keep the existing no-retry policy, but never retain incomplete pairs or
+    // expose a zero device address to the fallback shaders.
+    const auto rollback = [&] {
+        if (f.payload) destroy_buffer(f.payload, f.payload_mem);
+        if (f.records) destroy_buffer(f.records, f.records_mem);
+        f.records = f.payload = VK_NULL_HANDLE;
+        f.records_mem = f.payload_mem = nullptr;
+        f.records_address = f.payload_address = 0;
+        return false;
+    };
     void* mapped = nullptr;
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     // (the records' header is the vertex stage's indirect draw)
-    if (!create_buffer(records, usage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, false, f.records, f.records_mem, &mapped)) return false;
+    if (!create_buffer(records, usage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, false, f.records, f.records_mem, &mapped))
+        return rollback();
     f.records_address = fallback_buffer_address(f.records);
+    if (!f.records_address) return rollback();
     if (payload) {
-        if (!create_buffer(payload, usage, false, f.payload, f.payload_mem, &mapped)) return false;
+        if (!create_buffer(payload, usage, false, f.payload, f.payload_mem, &mapped)) return rollback();
         f.payload_address = fallback_buffer_address(f.payload);
+        if (!f.payload_address) return rollback();
     }
-    if (!f.records_address) return false;
     f.ok = true;
     static std::mutex mu;   // (what they hold in all, on every recording thread, at each 64 MB more)
     std::lock_guard lk(mu);
