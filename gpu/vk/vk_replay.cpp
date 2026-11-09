@@ -53,6 +53,16 @@ CondNote cond_ring[1 << 15];
 uint32_t cond_ring_at = 0;
 namespace {
 
+// On VK_ERROR_DEVICE_LOST Vulkan cannot retire outstanding work. Exit instead of continuing
+// to accumulate submit-time captures and staging allocations against an unrecoverable device.
+[[noreturn]] void replay_fatal(const char* why);
+void fatal_on_device_lost(VkResult result, const char* where) {
+    if (result == VK_ERROR_DEVICE_LOST) {
+        checkpoints_report();
+        replay_fatal(where);
+    }
+}
+
 // ---- submissions: a timeline semaphore; value n = the n-th submit done ----
 VkSemaphore timeline = VK_NULL_HANDLE;
 // ---- (hookshot) recordings by number: a second timeline, signalled at the end of every recording with its number, and the
@@ -117,19 +127,22 @@ void recording_wait(Recording& r) {
         wi.semaphoreCount = 1;
         wi.pSemaphores = &batch_tl;
         wi.pValues = &r.batch;
-        vkWaitSemaphores(dev.device, &wi, UINT64_MAX);
+        fatal_on_device_lost(vkWaitSemaphores(dev.device, &wi, UINT64_MAX),
+                             "Vulkan device lost waiting for a batched recording");
         r.batch = 0;
         r.submitted = false;
         return;
     }
-    vkWaitForFences(dev.device, 1, &r.fence, VK_TRUE, UINT64_MAX);
+    fatal_on_device_lost(vkWaitForFences(dev.device, 1, &r.fence, VK_TRUE, UINT64_MAX),
+                         "Vulkan device lost waiting for a recording fence");
     vkResetFences(dev.device, 1, &r.fence);
     r.submitted = false;
 }
 
 uint64_t completed() {
     uint64_t v = 0;
-    vkGetSemaphoreCounterValue(dev.device, timeline, &v);
+    fatal_on_device_lost(vkGetSemaphoreCounterValue(dev.device, timeline, &v),
+                         "Vulkan device lost reading the submit timeline");
     return v;
 }
 // ---- (test) RX_VK_BATCH=1: the replay's submits held and sent as one vkQueueSubmit2 ----
@@ -177,7 +190,7 @@ void queue_flush_locked() {   // (dev.present_mu held)
     const VkResult res = vkQueueSubmit2(dev.queue, 1, &si, VK_NULL_HANDLE);
     static int failures;
     if (res != VK_SUCCESS && failures++ < 8) logf("vk: batched submit %llu failed (%d)", (unsigned long long)batch_next, (int)res);
-    if (res == VK_ERROR_DEVICE_LOST) checkpoints_report();
+    fatal_on_device_lost(res, "Vulkan device lost on a batched submit");
     batch_flushed = batch_next;
     st_flushes++, st_batched_cbs += (int64_t)pend.cbs.size();
     st_reason[flush_reason]++;
@@ -351,7 +364,7 @@ void submit_recording(Recording& r, bool signal_value = true, uint64_t signal_at
     r.submitted = res == VK_SUCCESS;
     static int failures;
     if (res != VK_SUCCESS && failures++ < 8) logf("vk: submit %llu failed (%d)", (unsigned long long)r.value, (int)res);
-    if (res == VK_ERROR_DEVICE_LOST) checkpoints_report();
+    fatal_on_device_lost(res, "Vulkan device lost submitting a recording");
 }
 
 // ---- NVN state (the draw path's, vk_state.h) ----
@@ -1500,7 +1513,7 @@ const uint8_t* replay_handle(VkCommandBuffer& cmd, const uint8_t* h, bool may_st
         const VkResult res = vkQueueSubmit2(dev.queue, 1, &si, j->r->fence);
         j->r->submitted = res == VK_SUCCESS;
         if (res != VK_SUCCESS) logf("vk: segment submit %llu failed (%d)", (unsigned long long)j->r->value, (int)res);
-        if (res == VK_ERROR_DEVICE_LOST) checkpoints_report();
+        fatal_on_device_lost(res, "Vulkan device lost submitting a parallel segment");
     }
     {
         std::unique_lock lk(par_pool.mu);
@@ -2084,7 +2097,7 @@ int wait(uint64_t f, uint64_t timeout_ns) {
     if (res != VK_SUCCESS && timeout_ns > 1000000000ull && logged++ < 8)
         logf("vk: wait for fence %llu (done %llu, pushed %llu): %d", (unsigned long long)f,
              (unsigned long long)completed(), (unsigned long long)pushed.load(), (int)res);
-    if (res == VK_ERROR_DEVICE_LOST) checkpoints_report();
+    fatal_on_device_lost(res, "Vulkan device lost waiting for a submit fence");
     return res == VK_SUCCESS;
 }
 void wait_queue_empty();
@@ -3072,7 +3085,8 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
     Frame& f = frames[frame_index];
     const int log_slot = frame_index;
     frame_index = (frame_index + 1) % 3;
-    vkWaitForFences(dev.device, 1, &f.done, VK_TRUE, UINT64_MAX);
+    fatal_on_device_lost(vkWaitForFences(dev.device, 1, &f.done, VK_TRUE, UINT64_MAX),
+                         "Vulkan device lost waiting to reuse a frame");
     framelog_collect(log_slot);
     uint32_t index = 0;
 #ifdef _WIN32
@@ -3086,6 +3100,7 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
     const uint64_t acquire_timeout = unseen ? 0 : 100000000ull;
 #endif
     VkResult res = vkAcquireNextImageKHR(dev.device, dev.swapchain, acquire_timeout, f.acquired, VK_NULL_HANDLE, &index);
+    fatal_on_device_lost(res, "Vulkan device lost acquiring a swapchain image");
 #ifndef _WIN32
     if (res == VK_TIMEOUT || res == VK_NOT_READY) {
         if (!unseen) logf("vk: the window is not shown (no image back in 100 ms): frames are not shown until it is");
@@ -3176,7 +3191,8 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
         std::memcpy(r0, st_reason, sizeof r0);
     }
     reflex_submit_ends();
-    vkQueueSubmit2(dev.queue, 1, &si, f.done);
+    fatal_on_device_lost(vkQueueSubmit2(dev.queue, 1, &si, f.done),
+                         "Vulkan device lost submitting the presented frame");
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     pi.pNext = reflex_present_id(nullptr);   // (NVIDIA Reflex: the frame's present id, and its present's markers)
     pi.waitSemaphoreCount = 1;
@@ -3197,6 +3213,7 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
         res = vkQueuePresentKHR(dev.queue, &pi);
     }
     reflex_presented();
+    fatal_on_device_lost(res, "Vulkan device lost presenting a frame");
     if (res < 0 && res != VK_ERROR_OUT_OF_DATE_KHR) {   // (a present that failed: said, a few times)
         static int logged;
         if (logged++ < 8) logf("vk: present failed (VkResult %d%s)", (int)res, dev.present_queue ? ", on the presents' own queue" : "");
