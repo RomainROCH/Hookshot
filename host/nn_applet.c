@@ -123,7 +123,13 @@ uint32_t hos_output_size(int height) { return output_mode() == 2 ? (height ? 216
    the 4K output ran out of it. Scaled with the output's pixels; HOS_RT_POOL_MB=<MB> over it */
 uint64_t hos_rt_pool_size(uint64_t game) {
     const char *e = getenv("HOS_RT_POOL_MB");
-    const uint64_t px = (uint64_t)hos_output_size(0) * hos_output_size(1);
+    /* The wide game frame replaces the 16:9 output size (host/hos_main.c).  The pool
+       and its containing Graphics heap must follow that actual pixel count, not the
+       unwidened menu output, or wide render targets can exhaust the pool. */
+    extern volatile uint64_t hos_wide_out;
+    const uint64_t wide = hos_wide_out;
+    const uint64_t px = wide ? (uint64_t)(uint32_t)wide * (uint32_t)(wide >> 32)
+                             : (uint64_t)hos_output_size(0) * hos_output_size(1);
     const uint64_t v = e ? strtoull(e, NULL, 0) << 20 : px > 2560 * 1440 ? (game * px / (2560 * 1440) + 0xfffff) & ~0xfffffULL : game;
     static int logged;
     if (!logged++) hos_log("applet: render target pool %llu MB (the game's %llu MB)", (unsigned long long)(v >> 20), (unsigned long long)(game >> 20));
