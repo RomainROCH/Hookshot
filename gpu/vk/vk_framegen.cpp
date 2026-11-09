@@ -316,7 +316,13 @@ void display_main() {
             int64_t due = pace ? next_show : 0;
             const int64_t now = now_ns();
             // [HOOKSHOT-FLAG-AMD-PAUSE-PACING-2026] If game thread has backlogged jobs waiting, don't sleep
-            if (due < now || !fg.jobs.empty()) due = now;
+            // The producer writes this deque under fg.mu; sample its backlog under the same lock.
+            bool backlogged = false;
+            {
+                std::lock_guard lk(fg.mu);
+                backlogged = !fg.jobs.empty();
+            }
+            if (due < now || backlogged) due = now;
             if (due > j.at + interval + step) due = j.at + interval + step;
             if (due - now > 16666667LL) due = now + 16666667LL; // Cap wait time to ~60 FPS floor (max 16.6ms)
             if (due - now > 1000000) {
@@ -370,6 +376,7 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
             {
                 std::lock_guard qk(dev.present_mu);
                 queue_flush_locked();
+                vkDeviceWaitIdle(dev.device); // Finish queued GPU work before destroying its images.
             }
             drop_img(scale.cropped);
             scale.cropped_w = scale.cropped_h = 0;
@@ -394,6 +401,7 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
         {
             std::lock_guard qk(dev.present_mu);
             queue_flush_locked();
+            vkDeviceWaitIdle(dev.device); // Finish queued GPU work before destroying its images.
         }
         drop_img(scale.scaled);
         scale.scaled_w = scale.scaled_h = 0;
