@@ -122,6 +122,16 @@ def main():
         raise SystemExit("the removed atomic counter is still pushed")
 
     draw = DRAW.read_text(encoding="utf-8")
+    # #1383 shares the records and payload across fallback programs. Order the previous
+    # draw's vertex-stage reads before clearing them, then the clears before dispatch.
+    fallback = block(draw, "bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d)")
+    pass_end = fallback.index("end_pass(cmd);")
+    first_clear = fallback.index("vkCmdFillBuffer(cmd, f->records", pass_end)
+    compute_bind = fallback.index("if (!bind_descriptors(cmd, VK_PIPELINE_BIND_POINT_COMPUTE", first_clear)
+    if "full_barrier(cmd);" not in fallback[pass_end:first_clear]:
+        raise SystemExit("fallback: missing barrier before shared-buffer clears")
+    if "full_barrier(cmd);" not in fallback[first_clear:compute_bind]:
+        raise SystemExit("fallback: missing barrier after shared-buffer clears")
     if "bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d)" not in draw:
         raise SystemExit("vk_draw.cpp has no fallback dispatch")
     if "vkCmdDispatchIndirect(cmd, mesh_conv_buf, mesh_conv_off);" not in draw:

@@ -5187,6 +5187,9 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
     fallback_records_address = f->records_address;
     const uint32_t capacity = Shader::Backend::SPIRV::MESH_FALLBACK_CAPACITY;
     end_pass(cmd);
+    // Shared fallback buffers may still be read by the previous draw's vertex stage.
+    // Order that read before overwriting records and payload for this draw.
+    full_barrier(cmd);
     const uint32_t groups{(uint32_t)std::clamp(d.groups[0], 0, (int)capacity)};
     // (a task workgroup's slots are wg * threads + thread: those past the buffer are not started)
     const uint32_t slots{p.fallback_task
