@@ -34,6 +34,7 @@
 
 #include "vk_paths.h"
 #include "vk_draw.h"
+#include "vk_pipeline_cache_save_policy.h"
 #include "vk_menu.h"          // (opts.anisotropy: the Anisotropic filtering row; resolution_scale)
 #include "upscaler_rows.h"    // (upscale_lod_bias: which upscalers draw the 3D smaller)
 #include "dlss_actor.h"
@@ -8527,6 +8528,10 @@ void pipeline_cache_close() {
 
 void pipeline_cache_save(bool force) {
     if (!pcache || pcache_no_save || (!force && pcache_built_since_save < 32)) return;
+    // Intel #999: avoid background vkGetPipelineCacheData racing pipeline creation.
+    // Keep the unsaved count for a later forced save or an explicit opt-in.
+    if (PipelineCachePolicy::DeferIntelBackgroundSave(
+            force, dev.props.vendorID, getenv("RX_VK_PCACHE_BG_SAVE") != nullptr)) return;
     pcache_built_since_save = 0;
     // (on a thread of its own unless forced, at exit: ~100 MB fetched and written took the replay thread 100+ ms at
     // each scene change; the cache is internally synchronized, pipelines go on being built meanwhile)
