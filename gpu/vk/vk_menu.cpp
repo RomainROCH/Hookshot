@@ -56,6 +56,12 @@ HWND app_window();
 Options opts;
 
 namespace {
+// The interpolation display worker reads this while the replay thread handles the menu.
+// atomic_ref keeps Options' int layout and the Row table's int* interface unchanged.
+void store_live_pace(int value) {
+    std::atomic_ref<int>(opts.pace).store(value, std::memory_order_relaxed);
+}
+
 enum MenuTab {
     TAB_GRAPHICS = 0,
     TAB_AUDIO = 1,
@@ -578,23 +584,23 @@ void apply_preset(int p) {
     switch (p) {
     case 1: // Minimum (4GB VRAM / iGPU)
         opts.resolution = 4; opts.upscale = 2; opts.sharpness = 30;
-        opts.pace = 1;    opts.realtime = 1; opts.handheld = 1;
+        store_live_pace(1); opts.realtime = 1; opts.handheld = 1;
         break;
     case 2: // Low (6GB VRAM)
         opts.resolution = 2; opts.upscale = 2; opts.sharpness = 30;
-        opts.pace = 1;    opts.realtime = 1; opts.handheld = 1;
+        store_live_pace(1); opts.realtime = 1; opts.handheld = 1;
         break;
     case 3: // Balanced (8GB VRAM)
         opts.resolution = 1; opts.upscale = 1; opts.sharpness = 30;
-        opts.pace = 1;    opts.realtime = 1; opts.handheld = 0;
+        store_live_pace(1); opts.realtime = 1; opts.handheld = 0;
         break;
     case 4: // High (12GB VRAM)
         opts.resolution = 1; opts.upscale = 2; opts.sharpness = 40;
-        opts.pace = 1;    opts.realtime = 1; opts.handheld = 0;
+        store_live_pace(1); opts.realtime = 1; opts.handheld = 0;
         break;
     case 5: // Ultra (16GB+ VRAM)
         opts.resolution = 1; opts.upscale = 2; opts.sharpness = 50;
-        opts.pace = 1;    opts.realtime = 1; opts.handheld = 0;
+        store_live_pace(1); opts.realtime = 1; opts.handheld = 0;
         break;
     default:
         break;
@@ -1336,7 +1342,9 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
         *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
         apply_preset(*r.value);
     } else {
-        *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
+        const int next = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
+        if (r.value == &opts.pace) store_live_pace(next);
+        else *r.value = next;
         // (another Upscaler: the Render resolution moves to the nearest of its steps, DLSS's modes or the game's)
         if (r.value == &opts.dlss) opts.resolution = ur::snap_render(upscaler(), opts.resolution);   // (a slider stop kept)
         if (!r.preset_exempt) {   // (the controls, the window and the counter are not the preset's)
@@ -2640,7 +2648,7 @@ void menu_init() {
     if (opts.preset > 0) opts.budget = opts.preset;   // (a file from before memory_budget: its preset's)
     sync_preset_budgets(opts.budget);
     if (const char* e = getenv("RX_VK_FRAMEGEN_MULT")) opts.framegen = std::min(std::max(atoi(e), 2), 8);
-    if (const char* e = getenv("RX_VK_PACE")) opts.pace = atoi(e) != 0;
+    if (const char* e = getenv("RX_VK_PACE")) store_live_pace(atoi(e) != 0);
     if (const char* e = getenv("RX_VK_UPSCALE"))
         for (Row& r : rows)
             if (r.value == &opts.upscale) *r.value = std::min(std::max(atoi(e), r.lo), r.hi);
