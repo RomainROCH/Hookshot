@@ -438,7 +438,7 @@ void display_main() {
         // was the stutter, whatever the frame rate. Every frame now has its place on an even line, the recent frame time
         // apart, a frame early waiting for it: never more than one game frame behind what the game handed over, and a line
         // that has fallen behind what came starts again from now. RX_VK_PACE=0: as they come.
-        const bool pace = opts.pace != 0;
+        const bool pace = std::atomic_ref<int>(opts.pace).load(std::memory_order_relaxed) != 0;
         const bool timed = j.set->shown >= 0;   // (Auto: each frame at its own refresh's time)
         const int shown = timed ? j.set->shown : j.set->made + 1;
         const int64_t step = interval / std::max(shown, 1);
